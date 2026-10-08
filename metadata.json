@@ -1,0 +1,6 @@
+{
+  "name": "EB Scheduling Dynamic",
+  "description": "Workbook-driven electric bus charging schedules and dynamic charger allocation.",
+  "permissions": [],
+  "capabilities": []
+}
