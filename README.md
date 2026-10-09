@@ -1,9 +1,17 @@
 # EB Scheduling Web App
 
-The app reads the bundled GAMS bus table and submits it to a local Python API.
-That API solves a sparse, mathematically equivalent translation of the
-`Rohini2.gms` mixed-integer model with SCIP through PySCIPOpt. The GAMS runtime
-is not required.
+The repository is organized as a small frontend/backend application:
+
+```text
+frontend/   React, Vite, static assets, and frontend/.env
+backend/    Python API, SCIP model, and backend/.env
+scripts/    Commands to start either service or both
+docs/       Original GAMS model references
+```
+
+The React app reads the bundled GAMS bus table and submits it to the Python
+API. The API solves a sparse, mathematically equivalent translation of
+`Rohini2.gms` using SCIP through PySCIPOpt. The GAMS runtime is not required.
 
 ## Run
 
@@ -12,22 +20,50 @@ npm install
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r backend/requirements.txt
+cp frontend/.env.example frontend/.env
+cp backend/.env.example backend/.env
 npm run dev
 ```
 
-The development command starts both the frontend and the solver API. Open
-<http://localhost:3001>. Use **Import schedule data** to replace the
-bundled input with a GAMS `.inc` bus table or an Excel workbook containing a
-`Sheet3` worksheet. The input is replaced, not merged, and the optimization is
-rerun after a successful import. Identical requests arriving while a solve is
-in progress share that solve instead of queuing duplicate optimizer runs.
-The last successful feasible or optimal result is cached locally by its input
-data and model version. Refreshing the page or restarting the dev servers with
-the same input reuses that result; importing different data triggers a new
-optimization and replaces the cache.
-The dev script automatically uses `.venv` when it exists. On Windows, create
-the environment with `py -m venv .venv` and activate it with
-`.venv\Scripts\activate` before installing the Python requirements.
+`npm run dev` starts **both** services. Open <http://localhost:3001> for the
+frontend; the Vite `/api` proxy forwards optimization requests to the backend
+at <http://localhost:8000>. To run them separately, use two terminals:
+
+```bash
+npm run dev:web
+npm run dev:api
+```
+
+The frontend's settings live in [`frontend/.env.example`](./frontend/.env.example)
+and the backend's settings live in [`backend/.env.example`](./backend/.env.example).
+Copy each example to the corresponding `.env` file and change the values there.
+These local `.env` files are ignored by Git. The dev script automatically uses
+the root `.venv` when it exists. On Windows, create it with `py -m venv .venv`
+and activate it with `.venv\Scripts\activate` before installing the Python
+requirements.
+
+## Environment variables
+
+| File | Variable | Purpose |
+| --- | --- | --- |
+| `frontend/.env` | `VITE_API_BASE_URL` | Backend HTTPS origin in production; leave empty locally to use the Vite proxy |
+| `frontend/.env` | `VITE_DEV_HOST`, `VITE_DEV_PORT` | Frontend development/preview bind address and port |
+| `frontend/.env` | `VITE_API_PROXY_TARGET` | Local Python API target for Vite's `/api` proxy |
+| `backend/.env` | `HOST`, `PORT` | Python API bind address and port |
+| `backend/.env` | `CORS_ALLOWED_ORIGIN` | Browser origin allowed to call the API |
+| `backend/.env` | `SCHEDULE_TIME_LIMIT_SECONDS`, `SCHEDULE_MIP_GAP` | SCIP time limit and relative optimality gap |
+| `backend/.env` | `SCHEDULE_CACHE_FILE` | Optional cache-file location |
+
+Only put public, non-secret settings in `frontend/.env`: Vite embeds `VITE_*`
+values in the browser bundle. Keep server-only settings in `backend/.env`.
+
+Use **Import schedule data** to replace the bundled input with a GAMS `.inc`
+bus table or an Excel workbook containing a `Sheet3` worksheet. The input is
+replaced, not merged, and optimization reruns after a successful import.
+Identical requests arriving during a solve share one optimizer run. The last
+successful feasible or optimal result is cached locally by input data and
+model version, so a refresh or service restart with the same input reuses it.
+Importing different data triggers a new solve and replaces the cache.
 
 ## GAMS model parity
 
@@ -69,7 +105,7 @@ continues optimizing the original electricity-cost objective.
 
 ## Input formats
 
-The default input is [`public/data/roh-gams-bus-table.inc`](./public/data/roh-gams-bus-table.inc),
+The default input is [`frontend/public/data/roh-gams-bus-table.inc`](./frontend/public/data/roh-gams-bus-table.inc),
 the supplied `Roh.inc` data. Each data row contains a bus index followed by
 six columns: departure 1, arrival 1, departure 2, arrival 2, trip 1 distance,
 and trip 2 distance. Fractional time values are preserved, as they are used
@@ -112,19 +148,22 @@ npm run build
 The frontend build is static and can be deployed to Cloudflare Pages. Cloudflare
 Pages does not run this project's Python/SCIP API: the optimizer must run as a
 separate Python backend on a host that supports PySCIPOpt and long-running
-requests (for example, a VM or a Python container service). Configure the
-frontend build environment variable `VITE_API_BASE_URL` to that backend's
-HTTPS origin, such as `https://schedule-api.example.com`, and allow the Pages
-site's origin in the backend CORS policy by setting
-`CORS_ALLOWED_ORIGIN=https://your-project.pages.dev`. Leave
-`VITE_API_BASE_URL` empty for local development, where Vite proxies `/api` to
-`localhost:8000`.
+requests (for example, a VM or Python container service).
 
-The backend listens on `0.0.0.0` when deployed with `HOST=0.0.0.0`; set `PORT`
-to the port required by the hosting provider. Install Python dependencies with
-`pip install -r backend/requirements.txt` and start the API with
-`python backend/server.py`. Configure the provider's request timeout for the
-solver's 10-minute limit. The backend cache is stored under `backend/.cache`;
-mount persistent storage there if cached schedules should survive backend
-restarts. Do not deploy only the static `dist` folder and expect optimization
-to work without the Python API.
+For a Cloudflare Pages build, set `VITE_API_BASE_URL` in the Pages build
+environment to the backend's HTTPS origin, such as
+`https://schedule-api.example.com`. Set `CORS_ALLOWED_ORIGIN` in the backend's
+environment to the Pages site origin, such as
+`https://your-project.pages.dev`. Locally, leave `VITE_API_BASE_URL` empty; the
+Vite dev server uses `VITE_API_PROXY_TARGET` to proxy `/api` to the backend.
+
+The backend reads `HOST`, `PORT`, `CORS_ALLOWED_ORIGIN`,
+`SCHEDULE_TIME_LIMIT_SECONDS`, and `SCHEDULE_MIP_GAP` from `backend/.env` (or
+the hosting provider's environment settings). For deployment, set `HOST=0.0.0.0`
+and `PORT` to the port required by the provider. Install dependencies with
+`pip install -r backend/requirements.txt` and start the API using
+`python backend/server.py`. Configure the provider's request timeout to exceed
+the solver's configured limit. The backend cache is stored under
+`backend/.cache`; mount persistent storage there to retain cached schedules
+across backend restarts. The frontend build output is `frontend/dist`. Do not
+deploy only the frontend and expect optimization to work without the Python API.

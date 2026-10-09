@@ -1,1 +1,2 @@
 pyscipopt==6.2.1
+python-dotenv==1.1.1

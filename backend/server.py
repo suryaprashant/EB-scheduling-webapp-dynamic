@@ -7,6 +7,10 @@ import threading
 from concurrent.futures import Future
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from dotenv import load_dotenv
+
+
+load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
 
 BUS_COUNT = 101
 TIME_SLOTS = 288
@@ -19,6 +23,8 @@ BIG_M = 0.00092
 CHARGER_LIMIT = 16
 MAX_BODY_BYTES = 2_000_000
 MODEL_CACHE_VERSION = "rohini2-scip-v3"
+SOLVER_TIME_LIMIT_SECONDS = float(os.environ.get("SCHEDULE_TIME_LIMIT_SECONDS", "600"))
+SOLVER_MIP_GAP = float(os.environ.get("SCHEDULE_MIP_GAP", "0.0001"))
 CORS_ALLOWED_ORIGIN = os.environ.get("CORS_ALLOWED_ORIGIN", "*")
 CACHE_FILE = os.environ.get(
     "SCHEDULE_CACHE_FILE",
@@ -79,8 +85,8 @@ class ModelBuilder:
         solver = Model("Rohini2")
         solver.hideOutput()
         solver.setEmphasis(SCIP_PARAMEMPHASIS.FEASIBILITY)
-        solver.setParam("limits/time", 600.0)
-        solver.setParam("limits/gap", 0.0001)
+        solver.setParam("limits/time", SOLVER_TIME_LIMIT_SECONDS)
+        solver.setParam("limits/gap", SOLVER_MIP_GAP)
         variables = [
             solver.addVar(
                 name=f"v{index}",

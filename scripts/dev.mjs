@@ -1,11 +1,14 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const processes = [];
 let stopping = false;
+const projectRoot = fileURLToPath(new URL('../', import.meta.url));
 const virtualenvPython = process.platform === 'win32'
-  ? '.venv/Scripts/python.exe'
-  : '.venv/bin/python';
+  ? resolve(projectRoot, '.venv', 'Scripts', 'python.exe')
+  : resolve(projectRoot, '.venv', 'bin', 'python');
 const python = process.env.PYTHON
   ?? (existsSync(virtualenvPython) ? virtualenvPython : 'python3');
 
@@ -21,14 +24,14 @@ function stopProcesses(exitCode = 0) {
 const backend = spawn(
   python,
   ['backend/server.py'],
-  { stdio: 'inherit' },
+  { cwd: projectRoot, stdio: 'inherit' },
 );
 processes.push(backend);
 
 const frontend = spawn(
   'npm',
   ['run', 'dev:web'],
-  { stdio: 'inherit' },
+  { cwd: projectRoot, stdio: 'inherit' },
 );
 processes.push(frontend);
 

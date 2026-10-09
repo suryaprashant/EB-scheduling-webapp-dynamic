@@ -1,31 +1,16 @@
 {
-  "name": "eb-scheduling-webapp-dynamic",
+  "name": "eb-scheduling-webapp",
   "private": true,
-  "version": "1.0.0",
   "type": "module",
+  "workspaces": [
+    "frontend"
+  ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "dev:web": "vite --host 0.0.0.0 --port 3001",
-    "dev:api": "python3 backend/server.py",
-    "build": "tsc && vite build",
-    "lint": "tsc --noEmit",
-    "preview": "vite preview --host 0.0.0.0 --port 3001"
-  },
-  "dependencies": {
-    "@e965/xlsx": "^0.20.3",
-    "lucide-react": "^0.469.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
-  },
-  "devDependencies": {
-    "@types/node": "^22.10.2",
-    "@types/react": "^18.3.18",
-    "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^4.3.4",
-    "autoprefixer": "^10.4.20",
-    "postcss": "^8.4.49",
-    "tailwindcss": "^3.4.17",
-    "typescript": "^5.7.2",
-    "vite": "^6.0.7"
+    "dev:web": "npm run dev --workspace frontend",
+    "dev:api": "node scripts/dev-api.mjs",
+    "build": "npm run build --workspace frontend",
+    "lint": "npm run lint --workspace frontend",
+    "preview": "npm run preview --workspace frontend"
   }
 }
