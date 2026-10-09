@@ -31,9 +31,10 @@ const SLOT_MINUTES = 5;
 const CHARGER_KW = 240;
 const CHARGING_EFFICIENCY = 0.92;
 const CHARGER_COUNT = 16;
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 
 async function solveGamsModel(buses: GamsBusRow[]): Promise<GamsSolution> {
-  const response = await fetch('/api/schedule', {
+  const response = await fetch(`${API_BASE_URL}/api/schedule`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ buses }),

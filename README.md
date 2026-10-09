@@ -91,15 +91,13 @@ GAMS model's five-minute time-slot units.
 
 SCIP uses feasibility emphasis and a 0.01% relative MIP optimality tolerance.
 A time limit, infeasible model, or solver error is reported to the UI. If the
-10-minute time limit is
-reached after SCIP has found a feasible incumbent, that schedule is
+10-minute time limit is reached after SCIP has found a feasible incumbent, that schedule is
 shown with a clear warning and the solver's remaining MIP gap; it is not
 presented as proven optimal. If no feasible incumbent exists, the UI reports
 the failure without showing a schedule. Optimization failures are logged in the
 terminal running `npm run dev` and returned as HTTP 503; unexpected API errors
 are logged and returned as HTTP 500. This does not change the model's objective
-or constraints. In a production deployment, host the Python backend and route
-`/api/*` from the web app's origin to that backend.
+or constraints.
 
 The supplied 101-bus input has been tested end-to-end by the SCIP model builder:
 it produced a feasible incumbent before the 10-minute limit, but the optimum
@@ -111,5 +109,22 @@ was not proven within that run.
 npm run build
 ```
 
-The built static app can be deployed to Cloudflare Pages with build command
-`npm run build` and output directory `dist`.
+The frontend build is static and can be deployed to Cloudflare Pages. Cloudflare
+Pages does not run this project's Python/SCIP API: the optimizer must run as a
+separate Python backend on a host that supports PySCIPOpt and long-running
+requests (for example, a VM or a Python container service). Configure the
+frontend build environment variable `VITE_API_BASE_URL` to that backend's
+HTTPS origin, such as `https://schedule-api.example.com`, and allow the Pages
+site's origin in the backend CORS policy by setting
+`CORS_ALLOWED_ORIGIN=https://your-project.pages.dev`. Leave
+`VITE_API_BASE_URL` empty for local development, where Vite proxies `/api` to
+`localhost:8000`.
+
+The backend listens on `0.0.0.0` when deployed with `HOST=0.0.0.0`; set `PORT`
+to the port required by the hosting provider. Install Python dependencies with
+`pip install -r backend/requirements.txt` and start the API with
+`python backend/server.py`. Configure the provider's request timeout for the
+solver's 10-minute limit. The backend cache is stored under `backend/.cache`;
+mount persistent storage there if cached schedules should survive backend
+restarts. Do not deploy only the static `dist` folder and expect optimization
+to work without the Python API.

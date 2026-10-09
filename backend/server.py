@@ -19,6 +19,7 @@ BIG_M = 0.00092
 CHARGER_LIMIT = 16
 MAX_BODY_BYTES = 2_000_000
 MODEL_CACHE_VERSION = "rohini2-scip-v3"
+CORS_ALLOWED_ORIGIN = os.environ.get("CORS_ALLOWED_ORIGIN", "*")
 CACHE_FILE = os.environ.get(
     "SCHEDULE_CACHE_FILE",
     os.path.join(os.path.dirname(__file__), ".cache", "schedule-result.json"),
@@ -755,9 +756,10 @@ class ScheduleHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", CORS_ALLOWED_ORIGIN)
         self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Vary", "Origin")
         self.end_headers()
 
     def send_json(self, status, value):
@@ -765,7 +767,8 @@ class ScheduleHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Origin", CORS_ALLOWED_ORIGIN)
+        self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(data)
 
