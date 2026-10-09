@@ -5,6 +5,7 @@ export interface ChargeSession {
   startMinute: number;
   endMinute: number;
   durationMinutes: number;
+  finalSoc?: number;
 }
 
 export interface AllocationRequest {

@@ -28,11 +28,17 @@ const backend = spawn(
 );
 processes.push(backend);
 
-const frontend = spawn(
-  'npm',
-  ['run', 'dev:web'],
-  { cwd: projectRoot, stdio: 'inherit' },
-);
+const frontend = process.platform === 'win32'
+  ? spawn(
+    process.env.ComSpec ?? 'cmd.exe',
+    ['/d', '/s', '/c', 'npm.cmd run dev:web'],
+    { cwd: projectRoot, stdio: 'inherit' },
+  )
+  : spawn(
+    'npm',
+    ['run', 'dev:web'],
+    { cwd: projectRoot, stdio: 'inherit' },
+  );
 processes.push(frontend);
 
 for (const child of processes) {

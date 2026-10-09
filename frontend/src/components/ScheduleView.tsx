@@ -169,7 +169,7 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ sessions, onDeleteSe
                 <th className="px-5 py-3">Start Time</th>
                 <th className="px-5 py-3">End Time</th>
                 <th className="px-5 py-3">Duration</th>
-                <th className="px-5 py-3"><span className="inline-flex items-center gap-1.5"><Battery className="h-4 w-4 text-[#1A6B52]" aria-hidden="true" />Est. SOC Gain</span></th>
+                <th className="px-5 py-3"><span className="inline-flex items-center gap-1.5"><Battery className="h-4 w-4 text-[#1A6B52]" aria-hidden="true" />Final SOC</span></th>
                 <th className="px-5 py-3">Status</th>
                 <th className="px-5 py-3 text-right">Actions</th>
               </tr>
@@ -177,7 +177,6 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ sessions, onDeleteSe
             <tbody className="divide-y divide-gray-100 font-medium text-gray-800">
               {filtered.map(session => {
                 const isConflict = conflictedIds.has(session.id);
-                const estSocGain = Math.min(100, (session.durationMinutes / 60) * (240 / 360) * 0.95 * 100);
                 return (
                   <tr key={session.id} className="hover:bg-gray-50/80 transition-colors">
                     <td className="px-5 py-3 font-bold text-gray-900">
@@ -209,10 +208,16 @@ export const ScheduleView: React.FC<ScheduleViewProps> = ({ sessions, onDeleteSe
                     </td>
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-2">
-                        <BatteryVisual soc={estSocGain} size="xs" isCharging />
-                        <span className="font-bold text-[#1A6B52] text-xs">
-                          +{estSocGain.toFixed(1)}%
-                        </span>
+                        {session.finalSoc === undefined ? (
+                          <span className="text-xs text-gray-400">--</span>
+                        ) : (
+                          <>
+                            <BatteryVisual soc={session.finalSoc} size="xs" />
+                            <span className="font-bold text-[#1A6B52] text-xs">
+                              {session.finalSoc.toFixed(2)}%
+                            </span>
+                          </>
+                        )}
                       </div>
                     </td>
                     <td className="px-5 py-3">

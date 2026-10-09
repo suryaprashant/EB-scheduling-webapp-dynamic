@@ -85,7 +85,6 @@ export const ChargersView: React.FC<ChargersViewProps> = ({ sessions }) => {
                     <p className="text-xs text-gray-400 italic">No assigned sessions</p>
                   ) : (
                     charger.sessions.slice(0, 3).map(s => {
-                      const estSoc = Math.min(100, Math.round(s.durationMinutes * 1.055));
                       return (
                         <div
                           key={s.id}
@@ -98,7 +97,7 @@ export const ChargersView: React.FC<ChargersViewProps> = ({ sessions }) => {
                               </div>
                               Bus {s.bus}
                             </span>
-                            <BatteryVisual soc={estSoc} size="xs" isCharging />
+                            {s.finalSoc !== undefined && <BatteryVisual soc={s.finalSoc} size="xs" />}
                           </div>
                           <span className="text-gray-500 text-[11px]">
                             {formatTime24(s.startMinute)} – {formatTime24(s.endMinute)}

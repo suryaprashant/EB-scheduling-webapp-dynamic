@@ -27,6 +27,26 @@ cp backend/.env.example backend/.env
 npm run dev
 ```
 
+On Windows PowerShell, use these commands instead; activating the virtual
+environment is not required because the dev script detects `.venv`:
+
+```powershell
+npm.cmd install
+py -m venv .venv
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+Copy-Item frontend\.env.example frontend\.env
+Copy-Item backend\.env.example backend\.env
+npm.cmd run dev
+```
+
+For separate Windows console windows that can be started and stopped together,
+run these from the repository root:
+
+```bat
+scripts\start.bat
+scripts\stop.bat
+```
+
 `npm run dev` starts **both** services. Open <http://localhost:3001> for the
 frontend; the Vite `/api` proxy forwards optimization requests to the backend
 at <http://localhost:8000>. To run them separately, use two terminals:
@@ -40,9 +60,9 @@ The frontend's settings live in [`frontend/.env.example`](./frontend/.env.exampl
 and the backend's settings live in [`backend/.env.example`](./backend/.env.example).
 Copy each example to the corresponding `.env` file and change the values there.
 These local `.env` files are ignored by Git. The dev script automatically uses
-the root `.venv` when it exists. On Windows, create it with `py -m venv .venv`
-and activate it with `.venv\Scripts\activate` before installing the Python
-requirements.
+the root `.venv` when it exists. On Windows, create it with `py -m venv .venv`;
+activation is optional. To install the Python requirements without activating
+it, run `.venv\Scripts\python.exe -m pip install -r backend\requirements.txt`.
 
 ## Environment variables
 
@@ -73,17 +93,21 @@ The backend encodes the variables, objective, and constraints in
 [`docs/Rohini2.gms`](./docs/Rohini2.gms), including:
 
 - 101 buses, three trip indices, and 288 five-minute time slots
-- 20 charger assignments and the model's 16 simultaneous charger limit (the
-  assignment binaries are projected out because the original limit already
-  guarantees an assignment exists)
+- 20 charger assignments and a limit of 20 simultaneous chargers (the
+  assignment binaries are projected out because the original limit guarantees
+  an assignment exists)
 - The GAMS tariff periods and cost objective
 - SOC arrival/departure equations, integer charge duration, startup binary,
   its exact linearization, charging-window and transition equations
+- Final post-trip SOC is constrained to at least 92%
+
+Optimized time block 1 is displayed as 04:00; each subsequent block advances by
+five minutes.
 
 The model is translated to a mathematically equivalent sparse mixed-integer
 formulation for SCIP; it does not replace the GAMS objective with a heuristic
 or a maximize-jobs objective. The GAMS model limits total simultaneous
-charging but does not bind a bus to the same numbered charger across slots.
+charging, up to 20 simultaneously, but does not bind a bus to the same numbered charger across slots.
 The UI now merges each bus's consecutive active slots into a charging session
 and assigns one stable physical charger to that full interval. Since no more
 than 16 buses charge simultaneously, interval coloring can assign these runs
@@ -124,6 +148,9 @@ Excel imports use row 1 as headers and one bus per row:
 
 Excel times may be time fractions or `HH:mm` strings. They are mapped to the
 GAMS model's five-minute time-slot units.
+Optimized result slots run from block 1 at 04:00 through block 288 at 03:55
+the following day. Each slot is five minutes, so the final slot ends at 04:00;
+input conversion is unchanged.
 
 ## Optimization runtime
 

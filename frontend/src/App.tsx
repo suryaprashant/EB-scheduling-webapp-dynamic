@@ -245,7 +245,7 @@ export const App: React.FC = () => {
                 ? 'Optimal schedule proven'
                 : 'Feasible schedule; optimality not proven'}
               {' by the local SCIP backend using the Rohini2.gms mixed-integer model: 101 buses, '}
-              288 five-minute time slots, 16 simultaneous chargers, GAMS tariff bands, and the
+              288 five-minute time slots, 20 simultaneous chargers, GAMS tariff bands, and the
               original SOC and charging-duration equations.
             </p>
           )}

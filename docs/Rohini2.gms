@@ -27,6 +27,7 @@ Parameter Etran rating of transformer /5000/;
    
 
 scalar bigM /0.00092/;
+scalar finalSOCmin /0.92/;
 Parameter PL(t);
 *PV1(t)=PV(t,'1');
 *PL(t)=PV(t,'2');
@@ -84,7 +85,7 @@ loop(i$(ord(i)>=1),
 
 Parameter Eb/360/;
 Parameter Pch/240/;
-Parameter Nch/16/;
+Parameter Nch/20/;
 
 Set P(i,k)  ;
 p(i,k)$(ord(k)=f(i))= yes;
@@ -132,7 +133,7 @@ Equations
     Dp(i,k+1)..   SOC_dep(i,k+1)=e=SOC_arr(i,k)+0.92*(Tchg(i,k)-5)/60*Pch/Eb;
     Arr(i,k)..    SOC_arr(i,k)=g=0.2;
     Dep(i,k)..    SOC_dep(i,k+1)=l=1;
-    Depl(i,k)..   SOC_dep(i,k)=g=0.92$p(i,k); 
+    Depl(i,k)..   SOC_dep(i,k)=g=finalSOCmin$p(i,k);
     binl(i,k)..   b(i,k)=l=1-bigM*(Tchg(i,k)-5);
     bing(i,k)..   b(i,k)=g=0.00001+bigM*(5-Tchg(i,k));
     mat1(i,k)..   sum(t$(Tstop(i,k)+1<=ord(t) and ord(t)<=(Tstop(i,k)+(trec(i,k)+5)/5)),x(i,t))=e=(Tchg(i,k)/5-u(i,k)/5);

@@ -6,6 +6,8 @@ backend/.cache/
 .vite/
 __pycache__/
 *.py[cod]
+/scripts/.backend.pid
+/scripts/.frontend.pid
 
 # Local environment variables
 .env

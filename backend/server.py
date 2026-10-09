@@ -26,11 +26,12 @@ TRIP_COUNT = 3
 BATTERY_KWH = 360
 CHARGER_KW = 240
 EFFICIENCY = 0.92
+FINAL_SOC_MINIMUM = 0.92
 DRIVE_KWH_PER_KM = 1.3
 BIG_M = 0.00092
-CHARGER_LIMIT = 16
+CHARGER_LIMIT = 20
 MAX_BODY_BYTES = 2_000_000
-MODEL_CACHE_VERSION = "rohini2-scip-v3"
+MODEL_CACHE_VERSION = "rohini2-scip-v5"
 SOLVER_TIME_LIMIT_SECONDS = float(os.environ.get("SCHEDULE_TIME_LIMIT_SECONDS", "600"))
 SOLVER_MIP_GAP = float(os.environ.get("SCHEDULE_MIP_GAP", "0.0001"))
 CORS_ALLOWED_ORIGIN = os.environ.get("CORS_ALLOWED_ORIGIN", "*")
@@ -60,6 +61,7 @@ class ModelBuilder:
         self.y = {}
         self.soc_arr = {}
         self.soc_dep = {}
+        self.final_soc_variables = {}
         self.warm_start = None
 
     def add_variable(self, cost=0.0, upper=math.inf, binary=False):
@@ -157,6 +159,10 @@ class ModelBuilder:
         return {
             "status": result_status,
             "activeSlots": active_slots,
+            "finalSocByBus": {
+                bus: float(solver.getVal(variables[variable]) * 100)
+                for bus, variable in self.final_soc_variables.items()
+            },
             "objectiveValue": float(solver.getObjVal()),
             "mipGap": mip_gap if math.isfinite(mip_gap) else None,
         }
@@ -220,6 +226,10 @@ def build_and_solve(input_buses):
     add_soc_constraints(model, parameters, charging_slots)
     add_transition_constraints(model)
     add_capacity_constraints(model)
+    model.final_soc_variables = {
+        bus: model.soc_dep[bus, parameters[bus - 1]["final_trip"]]
+        for bus in range(1, BUS_COUNT + 1)
+    }
     model.warm_start = build_feasible_start(model, buses, parameters, slot_windows)
     return model.solve()
 
@@ -261,17 +271,20 @@ def build_feasible_start(model, buses, parameters, slot_windows):
             arrival2 = departure2 - energy2
             if departure2 > 1 + 1e-8 or arrival2 < 0.2 - 1e-8:
                 continue
-            if parameter["final_trip"] == 2 and departure2 < 0.92 - 1e-8:
+            if parameter["final_trip"] == 2 and departure2 < FINAL_SOC_MINIMUM:
                 continue
 
             max_charge2 = min(
                 len(charge_slots[1]),
                 int((parameter["recovery"][1] + 5) // 5),
             )
-            if parameter["recovery"][1] <= 0 or arrival2 >= 0.92 - 1e-8:
+            if parameter["recovery"][1] <= 0 or arrival2 >= FINAL_SOC_MINIMUM:
                 count2 = 0
             else:
-                count2 = max(2, math.ceil((0.92 - arrival2) / charge_step - 1e-10) + 1)
+                count2 = max(
+                    2,
+                    math.ceil((FINAL_SOC_MINIMUM - arrival2) / charge_step - 1e-10) + 1,
+                )
             if count2 > max_charge2:
                 continue
             departure3 = arrival2 + charge_step * max(0, count2 - 1)
@@ -558,7 +571,7 @@ def add_soc_constraints(model, parameters, charging_slots):
     for bus, parameter in enumerate(parameters, start=1):
         model.add_row([(model.soc_dep[bus, 1], 1)], lower=0.9, upper=0.9)
         for trip in range(1, TRIP_COUNT + 1):
-            minimum_departure = 0.92 if trip == parameter["final_trip"] else 0
+            minimum_departure = FINAL_SOC_MINIMUM if trip == parameter["final_trip"] else 0
             model.add_row(
                 [(model.soc_arr[bus, trip], 1)],
                 lower=0.2,
@@ -606,7 +619,7 @@ def add_transition_constraints(model):
 
 def add_capacity_constraints(model):
     for slot in range(1, TIME_SLOTS + 1):
-        # GAMS N/Nchs imply this per-slot cap; ass/s1 is redundant under the 16 cap.
+        # GAMS N/Nchs imply this per-slot cap; ass/s1 is redundant under the 20 cap.
         model.add_row(
             [
                 (variable, 1)

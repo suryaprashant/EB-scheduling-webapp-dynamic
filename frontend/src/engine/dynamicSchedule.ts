@@ -21,6 +21,7 @@ export interface DynamicScheduleResult {
 
 interface GamsSolution {
   activeSlots: number[];
+  finalSocByBus: Record<number, number>;
   objectiveValue: number;
   status: 'optimal' | 'feasible_time_limit';
   mipGap: number | null;
@@ -35,9 +36,10 @@ interface ScheduleJobResponse {
 
 const TIME_SLOTS = 288;
 const SLOT_MINUTES = 5;
+const SCHEDULE_START_MINUTES = 4 * 60;
 const CHARGER_KW = 240;
 const CHARGING_EFFICIENCY = 0.92;
-const CHARGER_COUNT = 16;
+const CHARGER_COUNT = 20;
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '');
 
 async function readApiError(response: Response): Promise<string> {
@@ -171,8 +173,8 @@ export async function buildDynamicSchedule(
       if (slot !== previousSlot + 1) {
         runs.push({
           bus,
-          startMinute: (startSlot - 1) * SLOT_MINUTES,
-          endMinute: previousSlot * SLOT_MINUTES,
+          startMinute: SCHEDULE_START_MINUTES + (startSlot - 1) * SLOT_MINUTES,
+          endMinute: SCHEDULE_START_MINUTES + previousSlot * SLOT_MINUTES,
         });
         startSlot = slot;
       }
@@ -180,8 +182,8 @@ export async function buildDynamicSchedule(
     }
     runs.push({
       bus,
-      startMinute: (startSlot - 1) * SLOT_MINUTES,
-      endMinute: previousSlot * SLOT_MINUTES,
+      startMinute: SCHEDULE_START_MINUTES + (startSlot - 1) * SLOT_MINUTES,
+      endMinute: SCHEDULE_START_MINUTES + previousSlot * SLOT_MINUTES,
     });
   }
 
@@ -212,6 +214,7 @@ export async function buildDynamicSchedule(
       startMinute: run.startMinute,
       endMinute: run.endMinute,
       durationMinutes: run.endMinute - run.startMinute,
+      finalSoc: solution.finalSocByBus[run.bus],
     };
   });
 
