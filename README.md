@@ -10,7 +10,9 @@ docs/       Original GAMS model references
 ```
 
 The React app reads the bundled GAMS bus table and submits it to the Python
-API. The API solves a sparse, mathematically equivalent translation of
+API as a background job, polling short status requests rather than holding an
+HTTP connection open during optimization. The API solves a sparse,
+mathematically equivalent translation of
 `Rohini2.gms` using SCIP through PySCIPOpt. The GAMS runtime is not required.
 
 ## Run
@@ -162,8 +164,11 @@ The backend reads `HOST`, `PORT`, `CORS_ALLOWED_ORIGIN`,
 the hosting provider's environment settings). For deployment, set `HOST=0.0.0.0`
 and `PORT` to the port required by the provider. Install dependencies with
 `pip install -r backend/requirements.txt` and start the API using
-`python backend/server.py`. Configure the provider's request timeout to exceed
-the solver's configured limit. The backend cache is stored under
+`python backend/server.py`. Optimization runs as a background job, so the
+browser does not need to hold an HTTP request open for the solver's full
+runtime. `POST /api/schedule` returns a job ID; poll
+`GET /api/schedule/<job-id>` until it reports `completed` or `failed`. The
+backend cache is stored under
 `backend/.cache`; mount persistent storage there to retain cached schedules
 across backend restarts. The frontend build output is `frontend/dist`. Do not
 deploy only the frontend and expect optimization to work without the Python API.

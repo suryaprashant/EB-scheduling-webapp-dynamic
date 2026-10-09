@@ -50,13 +50,14 @@ export const App: React.FC = () => {
     }
 
     let isCurrent = true;
+    const controller = new AbortController();
     setIsOptimizing(true);
-    void buildDynamicSchedule(buses)
+    void buildDynamicSchedule(buses, controller.signal)
       .then(result => {
         if (isCurrent) setCalculation(result);
       })
       .catch(error => {
-        if (isCurrent) {
+        if (isCurrent && !(error instanceof DOMException && error.name === 'AbortError')) {
           setCalculation(null);
           setErrorMessage(error instanceof Error ? error.message : 'Could not optimize the charging schedule.');
         }
@@ -67,6 +68,7 @@ export const App: React.FC = () => {
 
     return () => {
       isCurrent = false;
+      controller.abort();
     };
   }, [buses]);
 

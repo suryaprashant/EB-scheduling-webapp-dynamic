@@ -4,7 +4,7 @@ import math
 import os
 import tempfile
 import threading
-from concurrent.futures import Future
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from dotenv import load_dotenv
@@ -32,7 +32,8 @@ CACHE_FILE = os.environ.get(
 )
 SOLVE_LOCK = threading.Lock()
 REQUESTS_LOCK = threading.Lock()
-IN_FLIGHT_SOLVES = {}
+JOBS_BY_ID = {}
+JOB_ID_BY_REQUEST = {}
 
 
 class OptimizationError(RuntimeError):
@@ -641,7 +642,37 @@ def validate_input(payload):
     return buses
 
 
-def solve_once(buses):
+def run_schedule_job(job_id, request_key, buses):
+    try:
+        print("Solving Rohini2.gms schedule...", flush=True)
+        with SOLVE_LOCK:
+            result = build_and_solve(buses)
+        write_cached_result(request_key, result)
+        with REQUESTS_LOCK:
+            job = JOBS_BY_ID.get(job_id)
+            if job is not None:
+                job.update(status="completed", result=result)
+        print(
+            f"Solved Rohini2.gms ({result['status']}): objective={result['objectiveValue']}, "
+            f"MIP gap={result['mipGap']}, active slots={len(result['activeSlots'])}",
+            flush=True,
+        )
+    except Exception as error:
+        with REQUESTS_LOCK:
+            job = JOBS_BY_ID.get(job_id)
+            if job is not None:
+                job.update(status="failed", error=str(error))
+        if isinstance(error, OptimizationError):
+            print(f"Optimization failed: {error}", flush=True)
+        else:
+            print(f"Unexpected schedule API error: {error!r}", flush=True)
+    finally:
+        with REQUESTS_LOCK:
+            if JOB_ID_BY_REQUEST.get(request_key) == job_id:
+                JOB_ID_BY_REQUEST.pop(request_key, None)
+
+
+def start_or_reuse_schedule_job(buses):
     canonical_buses = sorted(buses, key=lambda row: row["bus"])
     request_key = hashlib.sha256(
         json.dumps(
@@ -654,36 +685,29 @@ def solve_once(buses):
     with REQUESTS_LOCK:
         cached_result = read_cached_result(request_key)
         if cached_result is not None:
-            print("Using cached Rohini2.gms schedule.", flush=True)
-            return cached_result
-        future = IN_FLIGHT_SOLVES.get(request_key)
-        is_solver = future is None
-        if is_solver:
-            future = Future()
-            IN_FLIGHT_SOLVES[request_key] = future
+            return {"status": "completed", "result": cached_result}
 
-    if not is_solver:
-        return future.result()
+        existing_job_id = JOB_ID_BY_REQUEST.get(request_key)
+        if existing_job_id:
+            return {"status": "running", "jobId": existing_job_id}
 
-    try:
-        print("Solving Rohini2.gms schedule...", flush=True)
-        with SOLVE_LOCK:
-            result = build_and_solve(canonical_buses)
-        write_cached_result(request_key, result)
-        future.set_result(result)
-        print(
-            f"Solved Rohini2.gms ({result['status']}): objective={result['objectiveValue']}, "
-            f"MIP gap={result['mipGap']}, "
-            f"active slots={len(result['activeSlots'])}",
-            flush=True,
+        job_id = uuid.uuid4().hex
+        JOBS_BY_ID[job_id] = {"status": "running"}
+        JOB_ID_BY_REQUEST[request_key] = job_id
+        worker = threading.Thread(
+            target=run_schedule_job,
+            args=(job_id, request_key, canonical_buses),
+            name=f"schedule-{job_id[:8]}",
+            daemon=True,
         )
-        return result
-    except Exception as error:
-        future.set_exception(error)
-        raise
-    finally:
-        with REQUESTS_LOCK:
-            IN_FLIGHT_SOLVES.pop(request_key, None)
+        worker.start()
+        return {"status": "running", "jobId": job_id}
+
+
+def get_schedule_job(job_id):
+    with REQUESTS_LOCK:
+        job = JOBS_BY_ID.get(job_id)
+        return dict(job) if job is not None else None
 
 
 def read_cached_result(request_key):
@@ -731,10 +755,24 @@ def write_cached_result(request_key, result):
 
 class ScheduleHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path != "/api/health":
-            self.send_error(404)
+        if self.path == "/api/health":
+            self.send_json(200, {"status": "ok", "solver": "SCIP"})
             return
-        self.send_json(200, {"status": "ok", "solver": "SCIP"})
+        if self.path.startswith("/api/schedule/"):
+            job_id = self.path.removeprefix("/api/schedule/")
+            if not job_id or "/" in job_id:
+                self.send_error(404)
+                return
+            job = get_schedule_job(job_id)
+            if job is None:
+                self.send_json(
+                    404,
+                    {"status": "not_found", "error": "Schedule job not found; the backend may have restarted."},
+                )
+            else:
+                self.send_json(200, job)
+            return
+        self.send_error(404)
 
     def do_POST(self):
         if self.path != "/api/schedule":
@@ -746,8 +784,8 @@ class ScheduleHandler(BaseHTTPRequestHandler):
                 raise ValueError("Request body is empty or exceeds the size limit.")
             payload = json.loads(self.rfile.read(length))
             buses = validate_input(payload)
-            result = solve_once(buses)
-            self.send_json(200, result)
+            job = start_or_reuse_schedule_job(buses)
+            self.send_json(200 if job["status"] == "completed" else 202, job)
         except (ValueError, json.JSONDecodeError) as error:
             self.send_json(400, {"error": str(error)})
         except OptimizationError as error:
@@ -763,7 +801,7 @@ class ScheduleHandler(BaseHTTPRequestHandler):
             return
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", CORS_ALLOWED_ORIGIN)
-        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Vary", "Origin")
         self.end_headers()
