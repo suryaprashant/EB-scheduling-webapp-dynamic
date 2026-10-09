@@ -167,3 +167,20 @@ the solver's configured limit. The backend cache is stored under
 `backend/.cache`; mount persistent storage there to retain cached schedules
 across backend restarts. The frontend build output is `frontend/dist`. Do not
 deploy only the frontend and expect optimization to work without the Python API.
+
+### Render backend
+
+The root [`render.yaml`](./render.yaml) defines the Python API as a Render web
+service with `backend/` as its root directory. Create or update the service
+from this Blueprint so Render uses:
+
+- **Build command:** `pip install -r requirements.txt`
+- **Start command:** `python server.py`
+- **Health check path:** `/api/health`
+
+If configuring the existing Render service manually, set **Root Directory** to
+`backend` and use those same build, start, and health-check values. Do not use
+Render's Django default `gunicorn your_application.wsgi`; this API is a plain
+Python HTTP server and does not use Gunicorn or Django. Set
+`CORS_ALLOWED_ORIGIN` in the Render service environment to the exact deployed
+frontend origin before production use.
