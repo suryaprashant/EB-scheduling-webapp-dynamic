@@ -172,6 +172,9 @@ job state is held in backend memory while it runs, so a backend process restart
 loses that job; a persistent cache is written only after a result is completed.
 The frontend retries transient polling network errors and HTTP 502/503/504
 responses, but it cannot resume a solve after the backend process restarts.
+On Linux hosts such as Render, backend logs include periodic process RSS and
+peak-memory samples during optimization, which can help diagnose instance
+failures when dashboard metrics are unavailable.
 The backend cache is stored under
 `backend/.cache`; mount persistent storage there to retain cached schedules
 across backend restarts. The frontend build output is `frontend/dist`. Do not

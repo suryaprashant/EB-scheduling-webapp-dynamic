@@ -2,12 +2,20 @@ import hashlib
 import json
 import math
 import os
+import re
+import sys
 import tempfile
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from dotenv import load_dotenv
+
+try:
+    import resource
+except ImportError:
+    resource = None
 
 
 load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
@@ -83,6 +91,7 @@ class ModelBuilder:
             f"{nonzero_count} nonzeros.",
             flush=True,
         )
+        log_memory_snapshot("before SCIP model creation")
         solver = Model("Rohini2")
         solver.hideOutput()
         solver.setEmphasis(SCIP_PARAMEMPHASIS.FEASIBILITY)
@@ -122,6 +131,7 @@ class ModelBuilder:
                 solver.setSolVal(start, variables[index], value)
             if not solver.addSol(start, free=True):
                 print("SCIP rejected the feasible-start candidate; solving without it.", flush=True)
+        log_memory_snapshot("before SCIP optimize")
         solver.optimize()
         status = solver.getStatus()
         has_solution = solver.getNSols() > 0
@@ -643,8 +653,16 @@ def validate_input(payload):
 
 
 def run_schedule_job(job_id, request_key, buses):
+    stop_monitor = threading.Event()
+    monitor = threading.Thread(
+        target=log_process_resources,
+        args=(stop_monitor, job_id),
+        name=f"resources-{job_id[:8]}",
+        daemon=True,
+    )
     try:
         print("Solving Rohini2.gms schedule...", flush=True)
+        monitor.start()
         with SOLVE_LOCK:
             result = build_and_solve(buses)
         write_cached_result(request_key, result)
@@ -667,9 +685,59 @@ def run_schedule_job(job_id, request_key, buses):
         else:
             print(f"Unexpected schedule API error: {error!r}", flush=True)
     finally:
+        stop_monitor.set()
+        if monitor.is_alive():
+            monitor.join(timeout=1)
         with REQUESTS_LOCK:
             if JOB_ID_BY_REQUEST.get(request_key) == job_id:
                 JOB_ID_BY_REQUEST.pop(request_key, None)
+
+
+def log_process_resources(stop_event, job_id):
+    print(
+        f"Resource monitor started for job {job_id[:8]} "
+        f"(pid={os.getpid()}, stage=solver/build).",
+        flush=True,
+    )
+    while not stop_event.wait(15):
+        memory = read_process_memory()
+        if memory:
+            print(
+                f"Resource sample job={job_id[:8]} rss={memory.get('VmRSS', 'unknown')} "
+                f"peak={memory.get('VmHWM', memory.get('VmPeak', 'unknown'))}.",
+                flush=True,
+            )
+
+
+def read_process_memory():
+    status_path = "/proc/self/status"
+    try:
+        with open(status_path, encoding="ascii") as status_file:
+            status = status_file.read()
+    except OSError:
+        status = ""
+    memory = {
+        match.group(1): match.group(2)
+        for match in re.finditer(r"^(VmRSS|VmHWM|VmPeak):\s+(.+)$", status, re.MULTILINE)
+    }
+    if not memory and resource is not None:
+        peak_bytes = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if sys.platform == "darwin":
+            peak_bytes = int(peak_bytes)
+        else:
+            peak_bytes = int(peak_bytes * 1024)
+        memory["VmHWM"] = f"{peak_bytes // 1024} kB (process peak)"
+    return memory
+
+
+def log_memory_snapshot(stage):
+    memory = read_process_memory()
+    if memory:
+        print(
+            f"Process memory {stage}: rss={memory.get('VmRSS', 'unknown')} "
+            f"peak={memory.get('VmHWM', memory.get('VmPeak', 'unknown'))}.",
+            flush=True,
+        )
 
 
 def start_or_reuse_schedule_job(buses):
