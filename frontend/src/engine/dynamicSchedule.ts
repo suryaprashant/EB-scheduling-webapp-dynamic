@@ -63,6 +63,53 @@ function waitForPoll(signal: AbortSignal): Promise<void> {
   });
 }
 
+async function fetchJobStatus(jobId: string, signal: AbortSignal): Promise<Response> {
+  const retryDelays = [0, 2000, 4000, 8000, 12000];
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
+    if (retryDelays[attempt] > 0) {
+      await new Promise<void>((resolve, reject) => {
+        if (signal.aborted) {
+          reject(new DOMException('Schedule polling was cancelled.', 'AbortError'));
+          return;
+        }
+        const timeout = window.setTimeout(() => {
+          signal.removeEventListener('abort', onAbort);
+          resolve();
+        }, retryDelays[attempt]);
+        const onAbort = () => {
+          window.clearTimeout(timeout);
+          reject(new DOMException('Schedule polling was cancelled.', 'AbortError'));
+        };
+        signal.addEventListener('abort', onAbort, { once: true });
+      });
+    }
+
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/schedule/${encodeURIComponent(jobId)}`,
+        { signal },
+      );
+      if (![502, 503, 504].includes(response.status) || attempt === retryDelays.length - 1) {
+        return response;
+      }
+      lastError = new Error(`The API temporarily returned HTTP ${response.status}.`);
+    } catch (error) {
+      if (signal.aborted || (error instanceof DOMException && error.name === 'AbortError')) {
+        throw error;
+      }
+      lastError = error;
+    }
+  }
+
+  throw new Error(
+    `Could not reconnect to the optimization API to check job ${jobId}. ` +
+    `The backend may have restarted; check its hosting logs and memory. ` +
+    `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  );
+}
+
 async function solveGamsModel(
   buses: GamsBusRow[],
   signal: AbortSignal,
@@ -86,10 +133,7 @@ async function solveGamsModel(
 
   while (true) {
     await waitForPoll(signal);
-    const statusResponse = await fetch(
-      `${API_BASE_URL}/api/schedule/${encodeURIComponent(jobId)}`,
-      { signal },
-    );
+    const statusResponse = await fetchJobStatus(jobId, signal);
     if (!statusResponse.ok) {
       throw new Error(await readApiError(statusResponse));
     }

@@ -814,7 +814,10 @@ class ScheduleHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", CORS_ALLOWED_ORIGIN)
         self.send_header("Vary", "Origin")
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            print("Client disconnected before the API response was delivered.", flush=True)
 
     def log_message(self, format_string, *args):
         print(format_string % args)

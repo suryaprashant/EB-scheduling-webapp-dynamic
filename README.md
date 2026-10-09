@@ -168,7 +168,11 @@ and `PORT` to the port required by the provider. Install dependencies with
 browser does not need to hold an HTTP request open for the solver's full
 runtime. `POST /api/schedule` returns a job ID; poll
 `GET /api/schedule/<job-id>` until it reports `completed` or `failed`. The
-backend cache is stored under
+job state is held in backend memory while it runs, so a backend process restart
+loses that job; a persistent cache is written only after a result is completed.
+The frontend retries transient polling network errors and HTTP 502/503/504
+responses, but it cannot resume a solve after the backend process restarts.
+The backend cache is stored under
 `backend/.cache`; mount persistent storage there to retain cached schedules
 across backend restarts. The frontend build output is `frontend/dist`. Do not
 deploy only the frontend and expect optimization to work without the Python API.
