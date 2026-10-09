@@ -1,23 +1,81 @@
-# EB Scheduling Web App — Dynamic
+# EB Scheduling Web App
 
-An independent React/Vite project that reads fleet trip data from the `Sheet3`
-worksheet and dynamically builds charging sessions and charger assignments.
-It does not use the preassigned session records from the original project.
+The app reads the bundled GAMS bus table and submits it to a local Python API.
+That API solves a sparse, mathematically equivalent translation of the
+`Rohini2.gms` mixed-integer model with SCIP through PySCIPOpt. The GAMS runtime
+is not required.
 
-## Run locally
+## Run
 
 ```bash
 npm install
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r backend/requirements.txt
 npm run dev
 ```
 
-Open <http://localhost:3001>. The app loads the bundled GAMS bus table by
-default. Use **Import schedule data** to load another `.inc` file or an `.xlsx`
-or `.xls` workbook with a `Sheet3` worksheet.
+The development command starts both the frontend and the solver API. Open
+<http://localhost:3001>. Use **Import schedule data** to replace the
+bundled input with a GAMS `.inc` bus table or an Excel workbook containing a
+`Sheet3` worksheet. The input is replaced, not merged, and the optimization is
+rerun after a successful import. Identical requests arriving while a solve is
+in progress share that solve instead of queuing duplicate optimizer runs.
+The last successful feasible or optimal result is cached locally by its input
+data and model version. Refreshing the page or restarting the dev servers with
+the same input reuses that result; importing different data triggers a new
+optimization and replaces the cache.
+The dev script automatically uses `.venv` when it exists. On Windows, create
+the environment with `py -m venv .venv` and activate it with
+`.venv\Scripts\activate` before installing the Python requirements.
 
-## Expected workbook columns
+## GAMS model parity
 
-The `Sheet3` worksheet uses row 1 as headers and one bus per row:
+The backend encodes the variables, objective, and constraints in
+[`docs/Rohini2.gms`](./docs/Rohini2.gms), including:
+
+- 101 buses, three trip indices, and 288 five-minute time slots
+- 20 charger assignments and the model's 16 simultaneous charger limit (the
+  assignment binaries are projected out because the original limit already
+  guarantees an assignment exists)
+- The GAMS tariff periods and cost objective
+- SOC arrival/departure equations, integer charge duration, startup binary,
+  its exact linearization, charging-window and transition equations
+
+The model is translated to a mathematically equivalent sparse mixed-integer
+formulation for SCIP; it does not replace the GAMS objective with a heuristic
+or a maximize-jobs objective. The GAMS model limits total simultaneous
+charging but does not bind a bus to the same numbered charger across slots.
+The UI now merges each bus's consecutive active slots into a charging session
+and assigns one stable physical charger to that full interval. Since no more
+than 16 buses charge simultaneously, interval coloring can assign these runs
+to the 16 chargers without overlap. This display-level charger assignment does
+not change the optimized charging slots or objective. If multiple optimal
+schedules exist, SCIP may return a different but equally optimal schedule than
+another GAMS MIP solver.
+For tractability, charge-duration helper variables are algebraically eliminated
+using their exact GAMS constraints; the feasible charging patterns, objective,
+and SOC equations are preserved. Charging and transition variables are also
+created only in slots that can participate in a charging-window or its
+transition equations. Omitted charging variables have positive objective
+coefficients and occur only in charger-capacity constraints or unconstrained
+transition equations, so fixing them to zero preserves an optimal solution.
+The GAMS duration variable is integer, and `mat1` equates its charging portion
+to the number of active five-minute slots. Thus a trip that charges must use
+at least two slots; the only one-slot minimum is the inactive `Tchg = 5` case.
+Any SCIP MIP-start is checked against every row of the projected model before
+it is given to the optimizer; it is only a starting incumbent, and SCIP
+continues optimizing the original electricity-cost objective.
+
+## Input formats
+
+The default input is [`public/data/roh-gams-bus-table.inc`](./public/data/roh-gams-bus-table.inc),
+the supplied `Roh.inc` data. Each data row contains a bus index followed by
+six columns: departure 1, arrival 1, departure 2, arrival 2, trip 1 distance,
+and trip 2 distance. Fractional time values are preserved, as they are used
+directly by the GAMS model's time-slot equations.
+
+Excel imports use row 1 as headers and one bus per row:
 
 | Column | Value |
 | --- | --- |
@@ -26,47 +84,26 @@ The `Sheet3` worksheet uses row 1 as headers and one bus per row:
 | E / F | `Departure2` / `Arrival2` (optional as a pair) |
 | G / H | `nTrips1` / `nTrips2` distance in km |
 
-Times may be Excel time fractions or `HH:mm` strings. The project also includes
-`public/data/rohini-source.xlsx` as an alternate workbook input.
+Excel times may be time fractions or `HH:mm` strings. They are mapped to the
+GAMS model's five-minute time-slot units.
 
-### GAMS include format
+## Optimization runtime
 
-The app also accepts the `XLS2GMS` table format used by `Rohini.inc`. Each data
-row starts with the bus index, followed by six numeric columns in the same
-order used by `docs/Rohini.gms`: departure 1, arrival 1, departure 2, arrival
-2, trip 1 distance, and trip 2 distance. Times are minutes after midnight;
-zero trip-2 fields indicate that the bus has only one trip. Fractional minutes
-are rounded to whole minutes for the app's five-minute scheduling grid.
+SCIP uses feasibility emphasis and a 0.01% relative MIP optimality tolerance.
+A time limit, infeasible model, or solver error is reported to the UI. If the
+10-minute time limit is
+reached after SCIP has found a feasible incumbent, that schedule is
+shown with a clear warning and the solver's remaining MIP gap; it is not
+presented as proven optimal. If no feasible incumbent exists, the UI reports
+the failure without showing a schedule. Optimization failures are logged in the
+terminal running `npm run dev` and returned as HTTP 503; unexpected API errors
+are logged and returned as HTTP 500. This does not change the model's objective
+or constraints. In a production deployment, host the Python backend and route
+`/api/*` from the web app's origin to that backend.
 
-## Optimization model and limits
-
-The app computes the charging energy required between trips from SOC targets,
-then solves a mixed-integer linear scheduling model with the HiGHS WebAssembly
-solver in a browser worker. Binary variables select one five-minute-aligned
-start time per charge job, while capacity constraints limit simultaneous
-sessions to 20 chargers. It solves in two stages: first it maximizes the number
-of jobs scheduled, then minimizes their time-of-use tariff cost. The resulting
-sessions are assigned to charger IDs after optimization.
-The required charge duration for each job is calculated before optimization
-from the next trip's energy and the 20% arrival reserve, or the 90% overnight
-target; the MIP optimizes when each job is charged, not the SOC target or
-charge amount.
-
-It uses the supplied GMS parameters where they are explicit:
-
-- 360 kWh battery capacity and 1.3 kWh/km trip energy use
-- 240 kW charger power and 92% charging efficiency
-- 20% minimum arrival SOC and 90% initial/overnight SOC
-- five-minute charging blocks and five-minute charging startup allowance
-- the six time-of-use tariff rates defined in `docs/Rohini.gms`
-
-The bundled include is the bus-table data source referenced by the GMS model
-(the source names `Rohini1.inc`; the provided export is named `Rohini.inc`).
-The browser model optimizes charge-job placement and charger capacity, but
-does not reproduce the GMS formulation equation-for-equation: its charge
-duration and SOC treatment differ. Any infeasible trip SOC,
-unavailable charging window, or job omitted due to charger capacity is
-reported in the UI. Optimization runs locally; no solver backend is required.
+The supplied 101-bus input has been tested end-to-end by the SCIP model builder:
+it produced a feasible incumbent before the 10-minute limit, but the optimum
+was not proven within that run.
 
 ## Production build
 

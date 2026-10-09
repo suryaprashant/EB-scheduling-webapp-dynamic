@@ -1,12 +1,13 @@
 import type { ChargeSession } from '../types';
 
-export interface BusTrip {
+export interface GamsBusRow {
   bus: number;
-  trips: Array<{
-    departureMinute: number;
-    arrivalMinute: number;
-    distanceKm: number;
-  }>;
+  departure1: number;
+  arrival1: number;
+  departure2: number;
+  arrival2: number;
+  distance1: number;
+  distance2: number;
 }
 
 export interface DynamicScheduleResult {
@@ -14,371 +15,116 @@ export interface DynamicScheduleResult {
   warnings: string[];
   estimatedEnergyKwh: number;
   estimatedCost: number;
-  optimizationStatus: 'optimal';
+  optimizationStatus: 'optimal' | 'feasible_time_limit';
+  mipGap: number | null;
 }
 
-const BATTERY_KWH = 360;
+interface GamsSolution {
+  activeSlots: number[];
+  objectiveValue: number;
+  status: 'optimal' | 'feasible_time_limit';
+  mipGap: number | null;
+}
+
+const TIME_SLOTS = 288;
+const SLOT_MINUTES = 5;
 const CHARGER_KW = 240;
 const CHARGING_EFFICIENCY = 0.92;
-const DRIVE_KWH_PER_KM = 1.3;
-const MINIMUM_ARRIVAL_SOC = 20;
-const INITIAL_DEPARTURE_SOC = 90;
-const STARTUP_MINUTES = 5;
-const CHARGE_STEP_MINUTES = 5;
-const CHARGER_COUNT = 20;
+const CHARGER_COUNT = 16;
 
-interface ChargingJob {
-  bus: number;
-  tripNumber: number;
-  windowStart: number;
-  windowEnd: number;
-  duration: number;
-  targetSoc: number;
-}
-
-interface Candidate {
-  index: number;
-  jobIndex: number;
-  startMinute: number;
-  cost: number;
-  occupiedSlots: number[];
-}
-
-function normalizeTripTimes(bus: BusTrip): BusTrip {
-  let previousArrival = -1;
-
-  return {
-    ...bus,
-    trips: bus.trips.map(trip => {
-      let departureMinute = trip.departureMinute;
-      while (departureMinute < previousArrival) departureMinute += 1440;
-
-      let arrivalMinute = trip.arrivalMinute;
-      while (arrivalMinute < departureMinute) arrivalMinute += 1440;
-
-      previousArrival = arrivalMinute;
-      return { ...trip, departureMinute, arrivalMinute };
-    }),
-  };
-}
-
-function priceAt(minute: number): number {
-  const minuteOfDay = ((minute % 1440) + 1440) % 1440;
-  if (minuteOfDay <= 360) return 4;
-  if (minuteOfDay <= 600) return 5;
-  if (minuteOfDay <= 780) return 6;
-  if (minuteOfDay <= 1080) return 5;
-  if (minuteOfDay <= 1260) return 6;
-  return 5;
-}
-
-function chargeDurationForSocGain(socGain: number): number {
-  const activeChargeMinutes =
-    (socGain / 100 * BATTERY_KWH / (CHARGER_KW * CHARGING_EFFICIENCY)) * 60;
-  const totalMinutes = activeChargeMinutes + STARTUP_MINUTES;
-  return Math.max(
-    CHARGE_STEP_MINUTES,
-    Math.ceil(totalMinutes / CHARGE_STEP_MINUTES) * CHARGE_STEP_MINUTES,
-  );
-}
-
-function createLpModel(
-  jobs: ChargingJob[],
-  candidates: Candidate[],
-  objective: 'missed' | 'cost',
-  skippedCount?: number | string,
-): string {
-  const lines = ['Minimize'];
-  if (objective === 'missed') {
-    lines.push(` objective: ${jobs.map((_, index) => `skip_${index}`).join(' + ') || '0'}`);
-  } else {
-    lines.push(
-      ` objective: ${
-        candidates
-          .map(candidate => `${candidate.cost} x_${candidate.index}`)
-          .join(' + ') || '0'
-      }`,
-    );
-  }
-
-  lines.push('Subject To');
-  const previousJobByBus = new Map<number, number>();
-  jobs.forEach((_, jobIndex) => {
-    const jobCandidates = candidates
-      .filter(candidate => candidate.jobIndex === jobIndex)
-      .map(candidate => `x_${candidate.index}`);
-    lines.push(` job_${jobIndex}: ${[...jobCandidates, `skip_${jobIndex}`].join(' + ')} = 1`);
-    const previousJobIndex = previousJobByBus.get(jobs[jobIndex].bus);
-    if (previousJobIndex !== undefined) {
-      lines.push(` precedence_${jobIndex}: skip_${previousJobIndex} - skip_${jobIndex} <= 0`);
-    }
-    previousJobByBus.set(jobs[jobIndex].bus, jobIndex);
+async function solveGamsModel(buses: GamsBusRow[]): Promise<GamsSolution> {
+  const response = await fetch('/api/schedule', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ buses }),
   });
-
-  const candidatesBySlot = new Map<number, number[]>();
-  for (const candidate of candidates) {
-    for (const slot of candidate.occupiedSlots) {
-      const slotCandidates = candidatesBySlot.get(slot) ?? [];
-      slotCandidates.push(candidate.index);
-      candidatesBySlot.set(slot, slotCandidates);
-    }
+  if (!response.ok) {
+    const error = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(error?.error ?? `Schedule optimization failed (HTTP ${response.status}).`);
   }
-  for (const [slot, candidateIndices] of candidatesBySlot) {
-    lines.push(` capacity_${slot}: ${candidateIndices.map(index => `x_${index}`).join(' + ')} <= ${CHARGER_COUNT}`);
-  }
-
-  if (objective === 'cost') {
-    lines.push(
-      ` missed_count: ${jobs.map((_, index) => `skip_${index}`).join(' + ') || '0'} = ${skippedCount ?? 0}`,
-    );
-  }
-
-  lines.push('Binary');
-  for (const candidate of candidates) lines.push(` x_${candidate.index}`);
-  for (let index = 0; index < jobs.length; index += 1) lines.push(` skip_${index}`);
-  lines.push('End');
-  return lines.join('\n');
+  return response.json() as Promise<GamsSolution>;
 }
 
-function solveScheduleModel(
-  firstPassModel: string,
-  secondPassModelTemplate: string,
-  candidateCount: number,
-  jobCount: number,
-): Promise<{ scheduledCandidateIndices: number[]; skippedJobIndices: number[] }> {
-  return new Promise((resolve, reject) => {
-    const worker = new Worker(
-      new URL('./scheduleOptimizer.worker.ts', import.meta.url),
-      { type: 'module' },
-    );
-    const cleanup = () => worker.terminate();
+export async function buildDynamicSchedule(
+  inputBuses: GamsBusRow[],
+): Promise<DynamicScheduleResult> {
+  const solution = await solveGamsModel(inputBuses);
+  const slotsByBus = new Map<number, number[]>();
+  for (const activeIndex of solution.activeSlots) {
+    const bus = Math.floor(activeIndex / TIME_SLOTS) + 1;
+    const slot = activeIndex % TIME_SLOTS + 1;
+    const activeSlots = slotsByBus.get(bus) ?? [];
+    activeSlots.push(slot);
+    slotsByBus.set(bus, activeSlots);
+  }
 
-    worker.onmessage = event => {
-      cleanup();
-      const result = event.data as
-        | { scheduledCandidateIndices: number[]; skippedJobIndices: number[] }
-        | { error: string };
-      if ('error' in result) {
-        reject(new Error(result.error));
-      } else {
-        resolve(result);
-      }
-    };
-    worker.onerror = event => {
-      cleanup();
-      reject(new Error(event.message || 'The schedule optimizer worker failed.'));
-    };
-    worker.postMessage({
-      firstPassModel,
-      secondPassModelTemplate,
-      candidateCount,
-      jobCount,
-    });
-  });
-}
-
-export async function buildDynamicSchedule(buses: BusTrip[]): Promise<DynamicScheduleResult> {
-  const jobs: ChargingJob[] = [];
-  const warnings: string[] = [];
-
-  for (const inputBus of buses) {
-    if (inputBus.trips.length === 0) continue;
-    const bus = normalizeTripTimes(inputBus);
-    let departureSoc = INITIAL_DEPARTURE_SOC;
-
-    for (let index = 0; index < bus.trips.length; index += 1) {
-      const trip = bus.trips[index];
-      const energyUsed = trip.distanceKm * DRIVE_KWH_PER_KM;
-      const arrivalSoc = departureSoc - energyUsed / BATTERY_KWH * 100;
-
-      if (arrivalSoc < MINIMUM_ARRIVAL_SOC) {
-        warnings.push(
-          `Bus ${bus.bus}: Trip ${index + 1} would arrive at ${arrivalSoc.toFixed(1)}% SOC, below the 20% minimum.`,
-        );
-        break;
-      }
-
-      const nextTrip = bus.trips[index + 1];
-      let nextDeparture: number;
-      let targetSoc: number;
-
-      if (nextTrip) {
-        nextDeparture = nextTrip.departureMinute;
-        const nextTripSocUse = nextTrip.distanceKm * DRIVE_KWH_PER_KM / BATTERY_KWH * 100;
-        targetSoc = MINIMUM_ARRIVAL_SOC + nextTripSocUse;
-      } else {
-        nextDeparture = bus.trips[0].departureMinute;
-        while (nextDeparture <= trip.arrivalMinute) nextDeparture += 1440;
-        targetSoc = INITIAL_DEPARTURE_SOC;
-      }
-
-      targetSoc = Math.min(100, targetSoc);
-      const requiredGain = Math.max(0, targetSoc - arrivalSoc);
-      if (requiredGain > 0) {
-        const duration = chargeDurationForSocGain(requiredGain);
-        jobs.push({
-          bus: bus.bus,
-          tripNumber: index + 1,
-          windowStart: trip.arrivalMinute,
-          windowEnd: nextDeparture,
-          duration,
-          targetSoc,
+  const runs: Array<{ bus: number; startMinute: number; endMinute: number }> = [];
+  for (const [bus, slots] of slotsByBus) {
+    slots.sort((a, b) => a - b);
+    let startSlot = slots[0];
+    let previousSlot = slots[0];
+    for (const slot of slots.slice(1)) {
+      if (slot !== previousSlot + 1) {
+        runs.push({
+          bus,
+          startMinute: (startSlot - 1) * SLOT_MINUTES,
+          endMinute: previousSlot * SLOT_MINUTES,
         });
+        startSlot = slot;
       }
-
-      departureSoc = targetSoc;
+      previousSlot = slot;
     }
+    runs.push({
+      bus,
+      startMinute: (startSlot - 1) * SLOT_MINUTES,
+      endMinute: previousSlot * SLOT_MINUTES,
+    });
   }
 
-  const candidates: Candidate[] = [];
-  const schedulableJobs: ChargingJob[] = [];
-  const jobHasCandidates: boolean[] = [];
-  for (const job of jobs) {
-    const firstStart =
-      Math.ceil(job.windowStart / CHARGE_STEP_MINUTES) * CHARGE_STEP_MINUTES;
-    const jobCandidates: Candidate[] = [];
-    for (
-      let startMinute = firstStart;
-      startMinute + job.duration <= job.windowEnd;
-      startMinute += CHARGE_STEP_MINUTES
-    ) {
-      let cost = 0;
-      for (
-        let minute = startMinute + STARTUP_MINUTES;
-        minute < startMinute + job.duration;
-        minute += CHARGE_STEP_MINUTES
-      ) {
-        cost += priceAt(minute) * CHARGER_KW * CHARGE_STEP_MINUTES / 60;
-      }
-      const index = candidates.length + jobCandidates.length;
-      jobCandidates.push({
-        index,
-        jobIndex: schedulableJobs.length,
-        startMinute,
-        cost,
-        occupiedSlots: Array.from(
-          { length: job.duration / CHARGE_STEP_MINUTES },
-          (_, slotIndex) => startMinute / CHARGE_STEP_MINUTES + slotIndex,
-        ),
-      });
-    }
-
-    jobHasCandidates.push(jobCandidates.length > 0);
-    schedulableJobs.push(job);
-    candidates.push(...jobCandidates);
-  }
-
-  let selectedCandidateIndices: number[] = [];
-  let skippedJobIndices: number[] = [];
-  if (schedulableJobs.length > 0) {
-    const firstPassModel = createLpModel(schedulableJobs, candidates, 'missed');
-    const secondPassModelTemplate = createLpModel(
-      schedulableJobs,
-      candidates,
-      'cost',
-      '__SKIPPED_COUNT__',
-    );
-    const optimized = await solveScheduleModel(
-      firstPassModel,
-      secondPassModelTemplate,
-      candidates.length,
-      schedulableJobs.length,
-    );
-    selectedCandidateIndices = optimized.scheduledCandidateIndices;
-    skippedJobIndices = optimized.skippedJobIndices;
-  }
-
-  const previouslySkippedBusJobs = new Set<number>();
-  for (const jobIndex of skippedJobIndices) {
-    const job = schedulableJobs[jobIndex];
-    if (!jobHasCandidates[jobIndex]) {
-      warnings.push(
-        `Bus ${job.bus}: Not enough time to reach ${job.targetSoc.toFixed(1)}% SOC before its next departure.`,
-      );
-    } else if (previouslySkippedBusJobs.has(job.bus)) {
-      warnings.push(
-        `Bus ${job.bus}: This charge was skipped because an earlier charge for the bus could not be scheduled.`,
-      );
-    } else {
-      warnings.push(
-        `Bus ${job.bus}: No charger capacity is available for the ${job.duration}-minute charge window.`,
-      );
-    }
-    previouslySkippedBusJobs.add(job.bus);
-  }
-
-  const chosenCandidates = new Map<number, Candidate>();
-  for (const candidateIndex of selectedCandidateIndices) {
-    const candidate = candidates[candidateIndex];
-    chosenCandidates.set(candidate.jobIndex, candidate);
-  }
-
-  const selectedSessions = schedulableJobs.flatMap((job, jobIndex) => {
-    const candidate = chosenCandidates.get(jobIndex);
-    return candidate
-      ? [{
-          id: `dynamic-bus-${job.bus}-trip-${job.tripNumber}`,
-          bus: job.bus,
-          charger: 0,
-          startMinute: candidate.startMinute,
-          endMinute: candidate.startMinute + job.duration,
-          durationMinutes: job.duration,
-        }]
-      : [];
-  });
-  selectedSessions.sort(
+  runs.sort(
     (a, b) =>
       a.startMinute - b.startMinute ||
       a.endMinute - b.endMinute ||
       a.bus - b.bus,
   );
 
-  const chargerAvailability = Array(CHARGER_COUNT).fill(Number.NEGATIVE_INFINITY) as number[];
-  for (const session of selectedSessions) {
-    const chargerIndex = chargerAvailability.findIndex(
-      availableAt => availableAt <= session.startMinute,
+  const chargerAvailableAt = Array<number>(CHARGER_COUNT).fill(0);
+  const sessions: ChargeSession[] = runs.map(run => {
+    const chargerIndex = chargerAvailableAt.findIndex(
+      availableAt => availableAt <= run.startMinute,
     );
     if (chargerIndex === -1) {
-      throw new Error('The optimizer returned a schedule exceeding charger capacity.');
+      throw new Error(
+        `Cannot assign a physical charger to Bus ${run.bus} at minute ${run.startMinute}: ` +
+        `the optimized schedule exceeds the ${CHARGER_COUNT}-charger limit.`,
+      );
     }
-    session.charger = chargerIndex + 1;
-    chargerAvailability[chargerIndex] = session.endMinute;
-  }
+    const charger = chargerIndex + 1;
+    chargerAvailableAt[chargerIndex] = run.endMinute;
+    return {
+      id: `gams-bus-${run.bus}-charger-${charger}-start-${run.startMinute}`,
+      bus: run.bus,
+      charger,
+      startMinute: run.startMinute,
+      endMinute: run.endMinute,
+      durationMinutes: run.endMinute - run.startMinute,
+    };
+  });
 
-  const sessions = selectedSessions
-    .sort(
-      (a, b) =>
-        a.startMinute - b.startMinute ||
-        a.charger - b.charger ||
-        a.bus - b.bus,
-    );
-  const estimatedEnergyKwh = sessions.reduce(
-    (total, session) =>
-      total +
-      Math.max(0, session.durationMinutes - STARTUP_MINUTES) *
-        CHARGER_KW *
-        CHARGING_EFFICIENCY /
-        60,
-    0,
+  sessions.sort(
+    (a, b) =>
+      a.startMinute - b.startMinute ||
+      a.charger - b.charger ||
+      a.bus - b.bus,
   );
-  const estimatedCost = sessions.reduce((total, session) => {
-    let sessionCost = 0;
-    for (
-      let minute = session.startMinute + STARTUP_MINUTES;
-      minute < session.endMinute;
-      minute += CHARGE_STEP_MINUTES
-    ) {
-      sessionCost +=
-        priceAt(minute) * CHARGER_KW * CHARGE_STEP_MINUTES / 60;
-    }
-    return total + sessionCost;
-  }, 0);
 
   return {
     sessions,
-    warnings,
-    estimatedEnergyKwh,
-    estimatedCost,
-    optimizationStatus: 'optimal',
+    warnings: [],
+    estimatedEnergyKwh:
+      solution.activeSlots.length * CHARGER_KW * SLOT_MINUTES * CHARGING_EFFICIENCY / 60,
+    estimatedCost: solution.objectiveValue,
+    optimizationStatus: solution.status,
+    mipGap: solution.mipGap,
   };
 }

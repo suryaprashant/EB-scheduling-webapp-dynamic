@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, FileSpreadsheet, RefreshCw, Upload } from 'lucide-react';
-import type { BusTrip, DynamicScheduleResult } from './engine/dynamicSchedule';
+import type { DynamicScheduleResult, GamsBusRow } from './engine/dynamicSchedule';
 import { buildDynamicSchedule } from './engine/dynamicSchedule';
 import { parseGamsInclude, parseScheduleFile } from './engine/workbookImport';
 import type { ChargeSession } from './types';
@@ -12,12 +12,12 @@ import { ScheduleView } from './components/ScheduleView';
 
 type Tab = 'allocate' | 'overview' | 'schedule' | 'chargers';
 
-const DEFAULT_INCLUDE = '/data/rohini-gams-bus-table.inc';
+const DEFAULT_INCLUDE = '/data/roh-gams-bus-table.inc';
 
-async function loadDefaultSchedule(): Promise<BusTrip[]> {
+async function loadDefaultSchedule(): Promise<GamsBusRow[]> {
   const response = await fetch(DEFAULT_INCLUDE);
   if (!response.ok) {
-    throw new Error(`Could not load the bundled GAMS bus table (HTTP ${response.status}).`);
+    throw new Error(`Could not load the bundled Roh.inc input (HTTP ${response.status}).`);
   }
   return parseGamsInclude(await response.text());
 }
@@ -25,8 +25,8 @@ async function loadDefaultSchedule(): Promise<BusTrip[]> {
 export const App: React.FC = () => {
   const fileInput = useRef<HTMLInputElement>(null);
   const [currentTab, setCurrentTab] = useState<Tab>('overview');
-  const [buses, setBuses] = useState<BusTrip[] | null>(null);
-  const [sourceName, setSourceName] = useState('Bundled GAMS include · Bus table');
+  const [buses, setBuses] = useState<GamsBusRow[] | null>(null);
+  const [sourceName, setSourceName] = useState('Bundled Roh.inc · GAMS Bus table');
   const [manualSessions, setManualSessions] = useState<ChargeSession[]>([]);
   const [deletedSessionIds, setDeletedSessionIds] = useState<Set<string>>(new Set());
   const [calculation, setCalculation] = useState<DynamicScheduleResult | null>(null);
@@ -38,7 +38,7 @@ export const App: React.FC = () => {
     loadDefaultSchedule()
       .then(setBuses)
       .catch(error => {
-        setErrorMessage(error instanceof Error ? error.message : 'Could not read the default GAMS bus table.');
+        setErrorMessage(error instanceof Error ? error.message : 'Could not read the bundled Roh.inc input.');
       })
       .finally(() => setIsLoading(false));
   }, []);
@@ -79,7 +79,12 @@ export const App: React.FC = () => {
   );
 
   const tripCount = useMemo(
-    () => buses?.reduce((count, bus) => count + bus.trips.length, 0) ?? 0,
+    () =>
+      buses?.reduce(
+        (count, bus) =>
+          count + Number(bus.distance1 > 0) + Number(bus.distance2 > 0),
+        0,
+      ) ?? 0,
     [buses],
   );
 
@@ -110,11 +115,11 @@ export const App: React.FC = () => {
     setIsLoading(true);
     try {
       setBuses(await loadDefaultSchedule());
-      setSourceName('Bundled GAMS include · Bus table');
+      setSourceName('Bundled Roh.inc · GAMS Bus table');
       setManualSessions([]);
       setDeletedSessionIds(new Set());
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Could not reload the bundled GAMS bus table.');
+      setErrorMessage(error instanceof Error ? error.message : 'Could not reload bundled Roh.inc.');
     } finally {
       setIsLoading(false);
     }
@@ -160,8 +165,8 @@ export const App: React.FC = () => {
                   {buses && ` · ${buses.length} buses · ${tripCount} trips`}
                 </p>
                 <p className="mt-1 max-w-3xl text-xs leading-relaxed text-gray-500">
-                  Charging sessions and charger numbers are recalculated from trip times and distance.
-                  No preassigned charger schedule is used.
+                  The schedule is solved from the imported bus data using the same model equations
+                  and objective as Rohini2.gms. No preassigned charger schedule is used.
                 </p>
               </div>
             </div>
@@ -200,13 +205,21 @@ export const App: React.FC = () => {
             <p className="mt-4 text-xs font-medium text-gray-500" role="status">
               {isLoading
                 ? 'Reading schedule data…'
-                : 'Optimizing charging sessions and charger assignments…'}
+                : 'Solving the Rohini2.gms model with SCIP…'}
             </p>
           )}
           {errorMessage && (
             <div className="mt-4 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-xs text-red-800" role="alert">
               <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
               <span>{errorMessage}</span>
+            </div>
+          )}
+          {calculation?.optimizationStatus === 'feasible_time_limit' && (
+            <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900" role="status">
+              A feasible schedule was found, but SCIP reached its time limit before proving it
+              has the lowest possible cost.
+              {calculation.mipGap !== null &&
+                ` The remaining MIP gap is ${(calculation.mipGap * 100).toFixed(2)}%.`}
             </div>
           )}
           {calculation && calculation.warnings.length > 0 && (
@@ -226,9 +239,12 @@ export const App: React.FC = () => {
           )}
           {calculation && (
             <p className="mt-3 text-[11px] leading-relaxed text-gray-400">
-              Proven-optimal in-browser mixed-integer schedule: it schedules the maximum number of
-              feasible charging jobs across 20 chargers, then minimizes tariff cost. Required
-              charging durations are derived from the SOC targets and supplied GMS parameters.
+              {calculation.optimizationStatus === 'optimal'
+                ? 'Optimal schedule proven'
+                : 'Feasible schedule; optimality not proven'}
+              {' by the local SCIP backend using the Rohini2.gms mixed-integer model: 101 buses, '}
+              288 five-minute time slots, 16 simultaneous chargers, GAMS tariff bands, and the
+              original SOC and charging-duration equations.
             </p>
           )}
         </section>
