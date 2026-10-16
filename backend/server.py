@@ -31,7 +31,7 @@ DRIVE_KWH_PER_KM = 1.3
 BIG_M = 0.00092
 CHARGER_LIMIT = 20
 MAX_BODY_BYTES = 2_000_000
-MODEL_CACHE_VERSION = "rohini2-scip-v5"
+MODEL_CACHE_VERSION = "rohini2-scip-v8"
 SOLVER_TIME_LIMIT_SECONDS = float(os.environ.get("SCHEDULE_TIME_LIMIT_SECONDS", "600"))
 SOLVER_MIP_GAP = float(os.environ.get("SCHEDULE_MIP_GAP", "0.0001"))
 CORS_ALLOWED_ORIGIN = os.environ.get("CORS_ALLOWED_ORIGIN", "*")
@@ -61,6 +61,8 @@ class ModelBuilder:
         self.y = {}
         self.soc_arr = {}
         self.soc_dep = {}
+        self.trip2_departure_soc_variables = {}
+        self.trip2_arrival_soc_variables = {}
         self.final_soc_variables = {}
         self.warm_start = None
 
@@ -163,21 +165,30 @@ class ModelBuilder:
                 bus: float(solver.getVal(variables[variable]) * 100)
                 for bus, variable in self.final_soc_variables.items()
             },
+            "socAfterTrip2ByBus": {
+                bus: float(solver.getVal(variables[variable]) * 100)
+                for bus, variable in self.trip2_arrival_soc_variables.items()
+            },
+            "socBeforeTrip2ByBus": {
+                bus: float(solver.getVal(variables[variable]) * 100)
+                for bus, variable in self.trip2_departure_soc_variables.items()
+            },
             "objectiveValue": float(solver.getObjVal()),
             "mipGap": mip_gap if math.isfinite(mip_gap) else None,
         }
 
 
 def tariff_at(slot):
-    if slot <= 73:
+    clock_slot = (slot + 47) % TIME_SLOTS + 1
+    if clock_slot <= 73:
         return 4
-    if slot <= 120:
+    if clock_slot <= 120:
         return 5
-    if slot <= 157:
+    if clock_slot <= 157:
         return 6
-    if slot <= 216:
+    if clock_slot <= 216:
         return 5
-    if slot <= 253:
+    if clock_slot <= 253:
         return 6
     return 5
 
@@ -229,6 +240,16 @@ def build_and_solve(input_buses):
     model.final_soc_variables = {
         bus: model.soc_dep[bus, parameters[bus - 1]["final_trip"]]
         for bus in range(1, BUS_COUNT + 1)
+    }
+    model.trip2_arrival_soc_variables = {
+        bus: model.soc_arr[bus, 2]
+        for bus in range(1, BUS_COUNT + 1)
+        if parameters[bus - 1]["recovery"][1] > 0
+    }
+    model.trip2_departure_soc_variables = {
+        bus: model.soc_dep[bus, 2]
+        for bus in range(1, BUS_COUNT + 1)
+        if parameters[bus - 1]["recovery"][1] > 0
     }
     model.warm_start = build_feasible_start(model, buses, parameters, slot_windows)
     return model.solve()

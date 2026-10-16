@@ -5,6 +5,9 @@ export interface ChargeSession {
   startMinute: number;
   endMinute: number;
   durationMinutes: number;
+  solverSocAtPlugout?: number;
+  socBeforeTrip2?: number;
+  socAfterTrip2?: number;
   finalSoc?: number;
 }
 

@@ -7,9 +7,8 @@ import {
   formatTime12,
   getChargerSnapshotsAtTime,
 } from '../engine/chargingAllocationEngine';
-import { SocDonutChart } from './SocDonutChart';
 import { ChargerStatusGrid } from './ChargerStatusGrid';
-import { BatteryVisual, BatteryCardPicture, EvBatteryThumbnail, EvChargerThumbnail, EvBusThumbnail, VectorBatteryChargePic } from './BatteryVisual';
+import { BatteryVisual, EvBatteryThumbnail, EvChargerThumbnail, EvBusThumbnail } from './BatteryVisual';
 import { Zap, Bus, Clock, Battery, Play, RotateCcw, Sparkles, CheckCircle2, AlertTriangle, PlusCircle } from 'lucide-react';
 
 interface AllocatorViewProps {
@@ -106,6 +105,14 @@ export const AllocatorView: React.FC<AllocatorViewProps> = ({ sessions, onAddSes
 
   const evaluatedMinute = parseTimeToMinutes(arrivalTimeInput) ?? 1200;
   const snapshots = getChargerSnapshotsAtTime(evaluatedMinute, sessions);
+  const solverSocAtPlugout = result?.plugoutMinute !== null && result?.plugoutMinute !== undefined
+    ? sessions.find(
+      session =>
+        session.bus === result.busNumber &&
+        session.endMinute === result.plugoutMinute &&
+        session.solverSocAtPlugout !== undefined,
+    )?.solverSocAtPlugout
+    : undefined;
 
   return (
     <div className="space-y-6">
@@ -381,24 +388,22 @@ export const AllocatorView: React.FC<AllocatorViewProps> = ({ sessions, onAddSes
                   </span>
                 </div>
 
-                <div className="bg-white rounded-xl p-3.5 border border-black/5 shadow-2xs">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider block">
-                      Expected SOC
+                <div className="bg-white rounded-xl border border-black/5 p-3.5 shadow-2xs">
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                      EXP. SOC
                     </span>
-                    {result.expectedSoc !== null && (
-                      <BatteryVisual soc={result.expectedSoc} size="xs" isCharging />
+                    {solverSocAtPlugout !== undefined && (
+                      <BatteryVisual soc={solverSocAtPlugout} size="xs" />
                     )}
                   </div>
-                  <span className="text-lg font-extrabold text-[#1A6B52] block">
-                    {result.expectedSoc !== null ? `${result.expectedSoc.toFixed(2)}%` : '--'}
-                  </span>
-                  <span className="text-[10px] font-medium text-emerald-600 block mt-0.5">
-                    {result.expectedSoc !== null
-                      ? `+${(result.expectedSoc - result.arrivalSoc).toFixed(2)}% gain`
-                      : ''}
+                  <span className="block text-lg font-extrabold text-[#1A6B52]">
+                    {solverSocAtPlugout !== undefined
+                      ? `${solverSocAtPlugout.toFixed(2)}%`
+                      : '--'}
                   </span>
                 </div>
+
               </div>
 
               {/* Commit Button */}
@@ -421,59 +426,6 @@ export const AllocatorView: React.FC<AllocatorViewProps> = ({ sessions, onAddSes
             </div>
           )}
 
-          {/* SOC Doughnut Charts Matching VBA UserForm with High-Resolution Battery Picture Visuals */}
-          {result && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center justify-center p-1.5 rounded-xl border border-emerald-300/40 shadow-xs bg-emerald-50 flex-shrink-0">
-                    <VectorBatteryChargePic soc={result.expectedSoc ?? result.arrivalSoc} size="xs" isCharging />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-gray-900 text-sm flex items-center gap-2">
-                      Battery State of Charge (SOC)
-                    </h3>
-                    <p className="text-xs text-gray-500">
-                      Energy added via 240 kW DC fast chargers (95% efficiency, 360 kWh pack)
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Gauge & 3D Battery Module Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <BatteryCardPicture
-                  title="Arrival State"
-                  subtitle="Initial Bus Battery"
-                  soc={result.arrivalSoc}
-                  isDeparture={false}
-                />
-                <BatteryCardPicture
-                  title="Departure State"
-                  subtitle="Post-Fast Charge Target"
-                  soc={result.expectedSoc ?? result.arrivalSoc}
-                  isDeparture={true}
-                  gain={result.expectedSoc !== null ? result.expectedSoc - result.arrivalSoc : null}
-                />
-              </div>
-
-              {/* Donut Gauges */}
-              <div className="flex flex-col sm:flex-row gap-4">
-                <SocDonutChart
-                  title="SOC @ Arr. Time"
-                  socValue={result.arrivalSoc}
-                  color="#9A6517"
-                  isDeparture={false}
-                />
-                <SocDonutChart
-                  title="SOC @ Dep. Time"
-                  socValue={result.expectedSoc ?? result.arrivalSoc}
-                  color="#1A6B52"
-                  isDeparture={true}
-                />
-              </div>
-            </div>
-          )}
         </div>
 
         {/* Right Column: 20-Charger Status Grid */}

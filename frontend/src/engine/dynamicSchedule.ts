@@ -22,6 +22,8 @@ export interface DynamicScheduleResult {
 interface GamsSolution {
   activeSlots: number[];
   finalSocByBus: Record<number, number>;
+  socBeforeTrip2ByBus: Record<number, number>;
+  socAfterTrip2ByBus: Record<number, number>;
   objectiveValue: number;
   status: 'optimal' | 'feasible_time_limit';
   mipGap: number | null;
@@ -194,6 +196,7 @@ export async function buildDynamicSchedule(
       a.bus - b.bus,
   );
 
+  const inputByBus = new Map(inputBuses.map(bus => [bus.bus, bus]));
   const chargerAvailableAt = Array<number>(CHARGER_COUNT).fill(0);
   const sessions: ChargeSession[] = runs.map(run => {
     const chargerIndex = chargerAvailableAt.findIndex(
@@ -207,6 +210,13 @@ export async function buildDynamicSchedule(
     }
     const charger = chargerIndex + 1;
     chargerAvailableAt[chargerIndex] = run.endMinute;
+    const busInput = inputByBus.get(run.bus);
+    const runStartSlot =
+      (run.startMinute - SCHEDULE_START_MINUTES) / SLOT_MINUTES + 1;
+    const isAfterTrip2 =
+      busInput !== undefined &&
+      busInput.departure2 > 0 &&
+      runStartSlot > busInput.arrival2;
     return {
       id: `gams-bus-${run.bus}-charger-${charger}-start-${run.startMinute}`,
       bus: run.bus,
@@ -214,6 +224,13 @@ export async function buildDynamicSchedule(
       startMinute: run.startMinute,
       endMinute: run.endMinute,
       durationMinutes: run.endMinute - run.startMinute,
+      solverSocAtPlugout: isAfterTrip2
+        ? solution.finalSocByBus[run.bus]
+        : busInput?.departure2
+          ? solution.socBeforeTrip2ByBus[run.bus]
+          : solution.finalSocByBus[run.bus],
+      socBeforeTrip2: solution.socBeforeTrip2ByBus[run.bus],
+      socAfterTrip2: solution.socAfterTrip2ByBus[run.bus],
       finalSoc: solution.finalSocByBus[run.bus],
     };
   });

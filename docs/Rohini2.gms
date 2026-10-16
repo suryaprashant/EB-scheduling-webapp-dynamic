@@ -31,28 +31,13 @@ scalar finalSOCmin /0.92/;
 Parameter PL(t);
 *PV1(t)=PV(t,'1');
 *PL(t)=PV(t,'2');
- loop(t$(ord(t)>=1),      
-     if(ord(t)>=1 and ord(t)<=73,
-   C(t)= 4;
-   else
-   if(ord(t)>=74 and ord(t)<=120,
-    C(t)= 5;
-   else
-   if(ord(t)>=121 and ord(t)<=157,
-    C(t)=6;
-    else
-   if(ord(t)>=158 and ord(t)<=216,
-   C(t)=5;
-   else
-   if(ord(t)>=217 and ord(t)<=253,
-   C(t)=6;
-   else
-   if(ord(t)>=254 and ord(t)<=288,
-   C(t)=5;
-   );
-   );
-   );
-   ););););
+* Map the midnight-based tariff periods onto the service day beginning at 04:00.
+C(t)$(ord(t)<=25 or ord(t)>=241)=4;
+C(t)$(ord(t)>=26 and ord(t)<=72)=5;
+C(t)$(ord(t)>=73 and ord(t)<=109)=6;
+C(t)$(ord(t)>=110 and ord(t)<=168)=5;
+C(t)$(ord(t)>=169 and ord(t)<=205)=6;
+C(t)$(ord(t)>=206 and ord(t)<=240)=5;
 Parameter Tstart(i,k);
 Tstart(i,'1')=Bus(i,'1');
 Tstart(i,'2')=Bus(i,'3');

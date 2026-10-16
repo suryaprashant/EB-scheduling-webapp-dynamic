@@ -1,7 +1,7 @@
 import React from 'react';
 import { ChargerSnapshot } from '../types';
 import { formatTime24 } from '../engine/chargingAllocationEngine';
-import { BatteryVisual, EvChargerThumbnail, EvBusThumbnail } from './BatteryVisual';
+import { EvChargerThumbnail, EvBusThumbnail } from './BatteryVisual';
 import { Bus, PlugZap } from 'lucide-react';
 
 interface ChargerStatusGridProps {
@@ -98,13 +98,6 @@ const ChargerRow: React.FC<{ snapshot: ChargerSnapshot; isAllocatedHere: boolean
         </span>
       </div>
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        {!isIdle && (
-          <BatteryVisual
-            soc={isAllocatedHere ? 90 : 60}
-            size="xs"
-            isCharging
-          />
-        )}
         <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] font-bold ${badgeClass}`}>
           {!isIdle && (
             <div className="w-9 h-9 rounded-lg overflow-hidden flex-shrink-0 bg-white border border-amber-300">

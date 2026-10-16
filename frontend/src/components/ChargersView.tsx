@@ -1,7 +1,7 @@
 import React from 'react';
 import { ChargeSession } from '../types';
 import { formatTime24 } from '../engine/chargingAllocationEngine';
-import { BatteryVisual, EvBatteryThumbnail, EvChargerThumbnail, EvBusThumbnail } from './BatteryVisual';
+import { EvBatteryThumbnail, EvChargerThumbnail, EvBusThumbnail } from './BatteryVisual';
 import { Bus, PlugZap, Zap } from 'lucide-react';
 
 interface ChargersViewProps {
@@ -97,7 +97,6 @@ export const ChargersView: React.FC<ChargersViewProps> = ({ sessions }) => {
                               </div>
                               Bus {s.bus}
                             </span>
-                            {s.finalSoc !== undefined && <BatteryVisual soc={s.finalSoc} size="xs" />}
                           </div>
                           <span className="text-gray-500 text-[11px]">
                             {formatTime24(s.startMinute)} – {formatTime24(s.endMinute)}

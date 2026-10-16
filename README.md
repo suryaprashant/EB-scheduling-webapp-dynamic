@@ -96,7 +96,8 @@ The backend encodes the variables, objective, and constraints in
 - 20 charger assignments and a limit of 20 simultaneous chargers (the
   assignment binaries are projected out because the original limit guarantees
   an assignment exists)
-- The GAMS tariff periods and cost objective
+- Midnight-based GAMS tariff periods mapped onto the service day starting at 04:00
+- The GAMS electricity-cost objective
 - SOC arrival/departure equations, integer charge duration, startup binary,
   its exact linearization, charging-window and transition equations
 - Final post-trip SOC is constrained to at least 92%
@@ -104,7 +105,7 @@ The backend encodes the variables, objective, and constraints in
 Optimized time block 1 is displayed as 04:00; each subsequent block advances by
 five minutes.
 
-The model is translated to a mathematically equivalent sparse mixed-integer
+The updated model is translated to a mathematically equivalent sparse mixed-integer
 formulation for SCIP; it does not replace the GAMS objective with a heuristic
 or a maximize-jobs objective. The GAMS model limits total simultaneous
 charging, up to 20 simultaneously, but does not bind a bus to the same numbered charger across slots.
